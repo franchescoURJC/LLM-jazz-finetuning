@@ -120,5 +120,3 @@ FastLanguageModel.for_inference(model)
 
 # Example generation
 generate_response(model, tokenizer, "Continue the fibonnaci sequence: 1, 1, 2, 3, 5, 8,")
-
-
