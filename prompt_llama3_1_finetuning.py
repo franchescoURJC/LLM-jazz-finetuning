@@ -85,6 +85,71 @@ def formatting_prompts_func(examples):
     return { "text" : texts, }
 pass
 
+dataset = load_dataset("FrantzesE/jazz-solos", split = "train")
+dataset = dataset.map(formatting_prompts_func, batched = True,)
+
+"""<a name="Train"></a>
+### Train the model
+Now let's use Huggingface TRL's `SFTTrainer`! More docs here: [TRL SFT docs](https://huggingface.co/docs/trl/sft_trainer). We do 60 steps to speed things up, but you can set `num_train_epochs=1` for a full run, and turn off `max_steps=None`. We also support TRL's `DPOTrainer`!
+"""
+
+trainer = SFTTrainer(
+    model = model,
+    tokenizer = tokenizer,
+    train_dataset = dataset,
+    dataset_text_field = "text",
+    max_seq_length = max_seq_length,
+    dataset_num_proc = 2,
+    packing = False, # Can make training 5x faster for short sequences.
+    args = TrainingArguments(
+        per_device_train_batch_size = 2,
+        gradient_accumulation_steps = 4,
+        warmup_steps = 5,
+        num_train_epochs = 5, # Set this for 1 full training run.
+        #max_steps = 60,
+        learning_rate = 2e-4,
+        fp16 = not is_bfloat16_supported(),
+        bf16 = is_bfloat16_supported(),
+        logging_steps = 1,
+        optim = "adamw_8bit",
+        weight_decay = 0.01,
+        lr_scheduler_type = "linear",
+        seed = 3407,
+        output_dir = "outputs",
+    ),
+)
+
+#@title Show current memory stats
+gpu_stats = torch.cuda.get_device_properties(0)
+start_gpu_memory = round(torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024, 3)
+max_memory = round(gpu_stats.total_memory / 1024 / 1024 / 1024, 3)
+""" print(f"GPU = {gpu_stats.name}. Max memory = {max_memory} GB.")
+print(f"{start_gpu_memory} GB of memory reserved.")
+
+trainer_stats = trainer.train()
+
+#@title Show final memory and time stats
+used_memory = round(torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024, 3)
+used_memory_for_lora = round(used_memory - start_gpu_memory, 3)
+used_percentage = round(used_memory         /max_memory*100, 3)
+lora_percentage = round(used_memory_for_lora/max_memory*100, 3)
+print(f"{trainer_stats.metrics['train_runtime']} seconds used for training.")
+print(f"{round(trainer_stats.metrics['train_runtime']/60, 2)} minutes used for training.")
+print(f"Peak reserved memory = {used_memory} GB.")
+print(f"Peak reserved memory for training = {used_memory_for_lora} GB.")
+print(f"Peak reserved memory % of max memory = {used_percentage} %.")
+print(f"Peak reserved memory for training % of max memory = {lora_percentage} %.") """
+
+"""<a name="Inference"></a>
+### Inference
+Let's run the model! You can change the instruction and input - leave the output blank!
+
+**[NEW] Try 2x faster inference in a free Colab for Llama-3.1 8b Instruct [here](https://colab.research.google.com/drive/1T-YBVfnphoVc8E2E854qF3jdia2Ll2W2?usp=sharing)**
+"""
+
+
+""" You can also use a `TextStreamer` for continuous inference - so you can see the generation token by token, instead of waiting the whole time!"""
+
 # alpaca_prompt = Copied from above
 FastLanguageModel.for_inference(model) # Enable native 2x faster inference
 inputs = tokenizer(
@@ -96,11 +161,15 @@ inputs = tokenizer(
     )
 ], return_tensors = "pt").to("cuda")
 
-outputs = model.generate(**inputs, max_new_tokens = 512, use_cache = True)
-tokenizer.batch_decode(outputs)
+text_streamer = TextStreamer(tokenizer)
+_ = model.generate(**inputs, streamer = text_streamer, max_new_tokens = 512)
 
-""" You can also use a `TextStreamer` for continuous inference - so you can see the generation token by token, instead of waiting the whole time!"""
+"""<a name="Save"></a>
+### Saving, loading finetuned models
+To save the final model as LoRA adapters, either use Huggingface's `push_to_hub` for an online save or `save_pretrained` for a local save.
 
+**[NOTE]** This ONLY saves the LoRA adapters, and not the full model. To save to 16bit or GGUF, scroll down!
+"""
 
 
 """Now if you want to load the LoRA adapters we just saved for inference, set `False` to `True`:"""
@@ -114,17 +183,19 @@ if True:
     )
     FastLanguageModel.for_inference(model) # Enable native 2x faster inference
 
-inputs = tokenizer(
+# alpaca_prompt = You MUST copy from above!
+
+""" inputs = tokenizer(
 [
-   alpaca_prompt.format(
-        "Given the following form of a jazz standard, generate a jazz solo, a list of notes in the SCAMP format with the addition of the chord which the note is currently soloing over.", # instruction
-        "A1: ||Bb6 G7 |C-7 F7 |Bb G-7 |C-7 F7 |F-7 Bb7 |Eb7 Ab7 |D-7 G7 |C-7 F7 || A2: ||Bb6 G7 |C-7 F7 |Bb G-7 |C-7 F7 |F-7 Bb7 |Eb7 Ab7 |C-7 F7 |Bb6 || B1: ||D7 |D7 |G7 |G7 |C7 |C7 |F7 |F7 || A3: ||Bb G7 |C-7 F7 |Bb G-7 |C-7 F7 |F-7 Bb7 |Eb7 Ab7 |C-7 F7 |Bb6 ||", # input
+    alpaca_prompt.format(
+        "What is a famous tall tower in Paris?", # instruction
+        "", # input
         "", # output - leave this blank for generation!
     )
-], return_tensors = "pt").to("cuda")
+], return_tensors = "pt").to("cuda") """
 
 text_streamer = TextStreamer(tokenizer)
-_ = model.generate(**inputs, streamer = text_streamer, max_new_tokens = 512)
+_ = model.generate(**inputs, streamer = text_streamer, max_new_tokens = 128)
 
 """You can also use Hugging Face's `AutoModelForPeftCausalLM`. Only use this if you do not have `unsloth` installed. It can be hopelessly slow, since `4bit` model downloading is not supported, and Unsloth's **inference is 2x faster**."""
 

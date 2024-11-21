@@ -158,7 +158,7 @@ inputs = tokenizer(
     )
 ], return_tensors = "pt").to("cuda")
 
-outputs = model.generate(**inputs, max_new_tokens = 256, use_cache = True)
+outputs = model.generate(**inputs, max_new_tokens = 512, use_cache = True)
 tokenizer.batch_decode(outputs)
 
 """ You can also use a `TextStreamer` for continuous inference - so you can see the generation token by token, instead of waiting the whole time!"""
@@ -211,7 +211,7 @@ if False:
 ], return_tensors = "pt").to("cuda") """
 
 text_streamer = TextStreamer(tokenizer)
-_ = model.generate(**inputs, streamer = text_streamer, max_new_tokens = 128)
+_ = model.generate(**inputs, streamer = text_streamer, max_new_tokens = 512)
 
 """You can also use Hugging Face's `AutoModelForPeftCausalLM`. Only use this if you do not have `unsloth` installed. It can be hopelessly slow, since `4bit` model downloading is not supported, and Unsloth's **inference is 2x faster**."""
 
