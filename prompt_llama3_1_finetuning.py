@@ -158,7 +158,7 @@ inputs = tokenizer(
     )
 ], return_tensors = "pt").to("cuda")
 
-outputs = model.generate(**inputs, max_new_tokens = 256, use_cache = True)
+outputs = model.generate(**inputs, max_new_tokens = 512, use_cache = True)
 tokenizer.batch_decode(outputs)
 
 """ You can also use a `TextStreamer` for continuous inference - so you can see the generation token by token, instead of waiting the whole time!"""
@@ -190,7 +190,7 @@ tokenizer.save_pretrained("lora_model")
 
 """Now if you want to load the LoRA adapters we just saved for inference, set `False` to `True`:"""
 
-if False:
+if True:
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name = "lora_model", # YOUR MODEL YOU USED FOR TRAINING
         max_seq_length = max_seq_length,
@@ -199,7 +199,11 @@ if False:
     )
     FastLanguageModel.for_inference(model) # Enable native 2x faster inference
 
-# alpaca_prompt = You MUST copy from above!
+alpaca_prompt = alpaca_prompt.format(
+        "Given the following form of a jazz standard, generate a jazz solo, a list of notes in the SCAMP format with the addition of the chord which the note is currently soloing over.", # instruction
+        "A1: ||Bb6 G7 |C-7 F7 |Bb G-7 |C-7 F7 |F-7 Bb7 |Eb7 Ab7 |D-7 G7 |C-7 F7 || A2: ||Bb6 G7 |C-7 F7 |Bb G-7 |C-7 F7 |F-7 Bb7 |Eb7 Ab7 |C-7 F7 |Bb6 || B1: ||D7 |D7 |G7 |G7 |C7 |C7 |F7 |F7 || A3: ||Bb G7 |C-7 F7 |Bb G-7 |C-7 F7 |F-7 Bb7 |Eb7 Ab7 |C-7 F7 |Bb6 ||", # input
+        "", # output - leave this blank for generation!
+    )
 
 """ inputs = tokenizer(
 [
