@@ -184,15 +184,15 @@ To save the final model as LoRA adapters, either use Huggingface's `push_to_hub`
 **[NOTE]** This ONLY saves the LoRA adapters, and not the full model. To save to 16bit or GGUF, scroll down!
 """
 
-model.save_pretrained("lora_model") # Local saving
-tokenizer.save_pretrained("lora_model")
+model.save_pretrained("llama3_1_lora_model") # Local saving
+tokenizer.save_pretrained("llama3_1_lora_model")
 
 
 """Now if you want to load the LoRA adapters we just saved for inference, set `False` to `True`:"""
 
 if False:
     model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name = "lora_model", # YOUR MODEL YOU USED FOR TRAINING
+        model_name = "llama3_1_lora_model", # YOUR MODEL YOU USED FOR TRAINING
         max_seq_length = max_seq_length,
         dtype = dtype,
         load_in_4bit = load_in_4bit,

@@ -107,7 +107,7 @@ tokenizer.batch_decode(outputs)
 
 if True:
     model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name = "lora_model", # YOUR MODEL YOU USED FOR TRAINING
+        model_name = "llama3_1_lora_model", # YOUR MODEL YOU USED FOR TRAINING
         max_seq_length = max_seq_length,
         dtype = dtype,
         load_in_4bit = load_in_4bit,
