@@ -101,29 +101,6 @@ tokenizer.batch_decode(outputs)
 
 """ You can also use a `TextStreamer` for continuous inference - so you can see the generation token by token, instead of waiting the whole time!"""
 
-# alpaca_prompt = Copied from above
-FastLanguageModel.for_inference(model) # Enable native 2x faster inference
-inputs = tokenizer(
-[
-    alpaca_prompt.format(
-        "Given the following form of a jazz standard, generate a jazz solo, a list of notes in the SCAMP format with the addition of the chord which the note is currently soloing over.", # instruction
-        "A1: ||Bb6 G7 |C-7 F7 |Bb G-7 |C-7 F7 |F-7 Bb7 |Eb7 Ab7 |D-7 G7 |C-7 F7 || A2: ||Bb6 G7 |C-7 F7 |Bb G-7 |C-7 F7 |F-7 Bb7 |Eb7 Ab7 |C-7 F7 |Bb6 || B1: ||D7 |D7 |G7 |G7 |C7 |C7 |F7 |F7 || A3: ||Bb G7 |C-7 F7 |Bb G-7 |C-7 F7 |F-7 Bb7 |Eb7 Ab7 |C-7 F7 |Bb6 ||", # input
-        "", # output - leave this blank for generation!
-    )
-], return_tensors = "pt").to("cuda")
-
-text_streamer = TextStreamer(tokenizer)
-_ = model.generate(**inputs, streamer = text_streamer, max_new_tokens = 512)
-
-"""<a name="Save"></a>
-### Saving, loading finetuned models
-To save the final model as LoRA adapters, either use Huggingface's `push_to_hub` for an online save or `save_pretrained` for a local save.
-
-**[NOTE]** This ONLY saves the LoRA adapters, and not the full model. To save to 16bit or GGUF, scroll down!
-"""
-
-model.save_pretrained("lora_model") # Local saving
-tokenizer.save_pretrained("lora_model")
 
 
 """Now if you want to load the LoRA adapters we just saved for inference, set `False` to `True`:"""
@@ -137,23 +114,17 @@ if True:
     )
     FastLanguageModel.for_inference(model) # Enable native 2x faster inference
 
-alpaca_prompt = alpaca_prompt.format(
+inputs = tokenizer(
+[
+   alpaca_prompt.format(
         "Given the following form of a jazz standard, generate a jazz solo, a list of notes in the SCAMP format with the addition of the chord which the note is currently soloing over.", # instruction
         "A1: ||Bb6 G7 |C-7 F7 |Bb G-7 |C-7 F7 |F-7 Bb7 |Eb7 Ab7 |D-7 G7 |C-7 F7 || A2: ||Bb6 G7 |C-7 F7 |Bb G-7 |C-7 F7 |F-7 Bb7 |Eb7 Ab7 |C-7 F7 |Bb6 || B1: ||D7 |D7 |G7 |G7 |C7 |C7 |F7 |F7 || A3: ||Bb G7 |C-7 F7 |Bb G-7 |C-7 F7 |F-7 Bb7 |Eb7 Ab7 |C-7 F7 |Bb6 ||", # input
         "", # output - leave this blank for generation!
     )
-
-""" inputs = tokenizer(
-[
-    alpaca_prompt.format(
-        "What is a famous tall tower in Paris?", # instruction
-        "", # input
-        "", # output - leave this blank for generation!
-    )
-], return_tensors = "pt").to("cuda") """
+], return_tensors = "pt").to("cuda")
 
 text_streamer = TextStreamer(tokenizer)
-_ = model.generate(**inputs, streamer = text_streamer, max_new_tokens = 128)
+_ = model.generate(**inputs, streamer = text_streamer, max_new_tokens = 512)
 
 """You can also use Hugging Face's `AutoModelForPeftCausalLM`. Only use this if you do not have `unsloth` installed. It can be hopelessly slow, since `4bit` model downloading is not supported, and Unsloth's **inference is 2x faster**."""
 
