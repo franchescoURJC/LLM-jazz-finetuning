@@ -1,10 +1,8 @@
 from unsloth import FastLanguageModel, is_bfloat16_supported
-from unsloth.chat_templates import get_chat_template
+import torch
 from datasets import load_dataset
 from trl import SFTTrainer
 from transformers import TrainingArguments, TextStreamer
-import torch
-
 max_seq_length = 2048 # Choose any! We auto support RoPE Scaling internally!
 dtype = None # None for auto detection. Float16 for Tesla T4, V100, Bfloat16 for Ampere+
 load_in_4bit = True # Use 4bit quantization to reduce memory usage. Can be False.
@@ -26,7 +24,11 @@ fourbit_models = [
 ] # More models at https://huggingface.co/unsloth
 
 model, tokenizer = FastLanguageModel.from_pretrained(
-    model_name = "unsloth/Phi-3.5-mini-instruct",
+     # Can select any from the below:
+    # "unsloth/Qwen2.5-0.5B", "unsloth/Qwen2.5-1.5B", "unsloth/Qwen2.5-3B", "unsloth/Qwen2.5-7B"
+    # "unsloth/Qwen2.5-14B",  "unsloth/Qwen2.5-32B",  "unsloth/Qwen2.5-72B",
+    # And also all Instruct versions and Math. Coding verisons!
+    model_name = "unsloth/Qwen2.5-0.5B",
     max_seq_length = max_seq_length,
     dtype = dtype,
     load_in_4bit = load_in_4bit,
@@ -52,75 +54,43 @@ model = FastLanguageModel.get_peft_model(
 
 """<a name="Data"></a>
 ### Data Prep
-We now use the `Phi-3` format for conversation style finetunes. We use [Open Assistant conversations](https://huggingface.co/datasets/philschmid/guanaco-sharegpt-style) in ShareGPT style. Phi-3 renders multi turn conversations like below:
+We now use the Alpaca dataset from [yahma](https://huggingface.co/datasets/yahma/alpaca-cleaned), which is a filtered version of 52K of the original [Alpaca dataset](https://crfm.stanford.edu/2023/03/13/alpaca.html). You can replace this code section with your own data prep.
 
-```
-<|user|>
-Hi!<|end|>
-<|assistant|>
-Hello! How are you?<|end|>
-<|user|>
-I'm doing great! And you?<|end|>
+**[NOTE]** To train only on completions (ignoring the user's input) read TRL's docs [here](https://huggingface.co/docs/trl/sft_trainer#train-on-completions-only).
 
-```
+**[NOTE]** Remember to add the **EOS_TOKEN** to the tokenized output!! Otherwise you'll get infinite generations!
 
-**[NOTE]** To train only on completions (ignoring the user's input) read Unsloth's docs [here](https://github.com/unslothai/unsloth/wiki#train-on-completions--responses-only-do-not-train-on-inputs).
-
-We use our `get_chat_template` function to get the correct chat template. We support `zephyr, chatml, mistral, llama, alpaca, vicuna, vicuna_old` and our own optimized `unsloth` template.
-
-Note ShareGPT uses `{"from": "human", "value" : "Hi"}` and not `{"role": "user", "content" : "Hi"}`, so we use `mapping` to map it.
+If you want to use the `llama-3` template for ShareGPT datasets, try our conversational [notebook](https://colab.research.google.com/drive/1XamvWYinY6FOSX9GLvnqSjjsNflxdhNc?usp=sharing).
 
 For text completions like novel writing, try this [notebook](https://colab.research.google.com/drive/1ef-tab5bhkvWmBOObepl1WgJvfvSzn5Q?usp=sharing).
 """
 
-tokenizer = get_chat_template(
-    tokenizer,
-    chat_template = "phi-3", # Supports zephyr, chatml, mistral, llama, alpaca, vicuna, vicuna_old, unsloth
-    mapping = {"role" : "from", "content" : "value", "user" : "human", "assistant" : "gpt"}, # ShareGPT style
-)
+alpaca_prompt = """Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.
 
+### Instruction:
+{}
+
+### Input:
+{}
+
+### Response:
+{}"""
+
+EOS_TOKEN = tokenizer.eos_token # Must add EOS_TOKEN
 def formatting_prompts_func(examples):
-    convos = examples["conversations"]
-    texts = [tokenizer.apply_chat_template(convo, tokenize = False, add_generation_prompt = False) for convo in convos]
+    instructions = examples["instruction"]
+    inputs       = examples["input"]
+    outputs      = examples["output"]
+    texts = []
+    for instruction, input, output in zip(instructions, inputs, outputs):
+        # Must add EOS_TOKEN, otherwise your generation will go on forever!
+        text = alpaca_prompt.format(instruction, input, output) + EOS_TOKEN
+        texts.append(text)
     return { "text" : texts, }
 pass
 
-dataset = load_dataset("philschmid/guanaco-sharegpt-style", split = "train")
+dataset = load_dataset("FrantzesE/jazz-solos", split = "train")
 dataset = dataset.map(formatting_prompts_func, batched = True,)
-
-"""Let's see how the `Phi-3` format works by printing the 5th element"""
-
-dataset[5]["conversations"]
-
-print(dataset[5]["text"])
-
-"""If you're looking to make your own chat template, that also is possible! You must use the Jinja templating regime. We provide our own stripped down version of the `Unsloth template` which we find to be more efficient, and leverages ChatML, Zephyr and Alpaca styles.
-
-More info on chat templates on [our wiki page!](https://github.com/unslothai/unsloth/wiki#chat-templates)
-"""
-
-unsloth_template = \
-    "{{ bos_token }}"\
-    "{{ 'You are a helpful assistant to the user\n' }}"\
-    "{% for message in messages %}"\
-        "{% if message['role'] == 'user' %}"\
-            "{{ '>>> User: ' + message['content'] + '\n' }}"\
-        "{% elif message['role'] == 'assistant' %}"\
-            "{{ '>>> Assistant: ' + message['content'] + eos_token + '\n' }}"\
-        "{% endif %}"\
-    "{% endfor %}"\
-    "{% if add_generation_prompt %}"\
-        "{{ '>>> Assistant: ' }}"\
-    "{% endif %}"
-unsloth_eos_token = "eos_token"
-
-if False:
-    tokenizer = get_chat_template(
-        tokenizer,
-        chat_template = (unsloth_template, unsloth_eos_token,), # You must provide a template and EOS token
-        mapping = {"role" : "from", "content" : "value", "user" : "human", "assistant" : "gpt"}, # ShareGPT style
-        map_eos_token = True, # Maps <|im_end|> to </s> instead
-    )
 
 """<a name="Train"></a>
 ### Train the model
@@ -139,7 +109,8 @@ trainer = SFTTrainer(
         per_device_train_batch_size = 2,
         gradient_accumulation_steps = 4,
         warmup_steps = 5,
-        max_steps = 60,
+        num_train_epochs = 5, # Set this for 1 full training run.
+        #max_steps = 60,
         learning_rate = 2e-4,
         fp16 = not is_bfloat16_supported(),
         bf16 = is_bfloat16_supported(),
@@ -149,7 +120,6 @@ trainer = SFTTrainer(
         lr_scheduler_type = "linear",
         seed = 3407,
         output_dir = "outputs",
-        report_to = "none", # Use this for WandB etc
     ),
 )
 
@@ -176,46 +146,40 @@ print(f"Peak reserved memory for training % of max memory = {lora_percentage} %.
 
 """<a name="Inference"></a>
 ### Inference
-Let's run the model! Since we're using `Phi-3`, use `apply_chat_template` with `add_generation_prompt` set to `True` for inference.
+Let's run the model! You can change the instruction and input - leave the output blank!
+
+**[NEW] Try 2x faster inference in a free Colab for Llama-3.1 8b Instruct [here](https://colab.research.google.com/drive/1T-YBVfnphoVc8E2E854qF3jdia2Ll2W2?usp=sharing)**
 """
 
-tokenizer = get_chat_template(
-    tokenizer,
-    chat_template = "phi-3", # Supports zephyr, chatml, mistral, llama, alpaca, vicuna, vicuna_old, unsloth
-    mapping = {"role" : "from", "content" : "value", "user" : "human", "assistant" : "gpt"}, # ShareGPT style
-)
-
+# alpaca_prompt = Copied from above
 FastLanguageModel.for_inference(model) # Enable native 2x faster inference
+inputs = tokenizer(
+[
+    alpaca_prompt.format(
+        "Given the following form of a jazz standard, generate a jazz solo, a list of notes in the SCAMP format with the addition of the chord which the note is currently soloing over.", # instruction
+        "A1: ||Bb6 G7 |C-7 F7 |Bb G-7 |C-7 F7 |F-7 Bb7 |Eb7 Ab7 |D-7 G7 |C-7 F7 || A2: ||Bb6 G7 |C-7 F7 |Bb G-7 |C-7 F7 |F-7 Bb7 |Eb7 Ab7 |C-7 F7 |Bb6 || B1: ||D7 |D7 |G7 |G7 |C7 |C7 |F7 |F7 || A3: ||Bb G7 |C-7 F7 |Bb G-7 |C-7 F7 |F-7 Bb7 |Eb7 Ab7 |C-7 F7 |Bb6 ||", # input
+        "", # output - leave this blank for generation!
+    )
+], return_tensors = "pt").to("cuda")
 
-messages = [
-    {"from": "human", "value": "Continue the fibonnaci sequence: 1, 1, 2, 3, 5, 8,"},
-]
-inputs = tokenizer.apply_chat_template(
-    messages,
-    tokenize = True,
-    add_generation_prompt = True, # Must add for generation
-    return_tensors = "pt",
-).to("cuda")
-
-outputs = model.generate(input_ids = inputs, max_new_tokens = 64, use_cache = True)
+outputs = model.generate(**inputs, max_new_tokens = 512, use_cache = True)
 tokenizer.batch_decode(outputs)
 
 """ You can also use a `TextStreamer` for continuous inference - so you can see the generation token by token, instead of waiting the whole time!"""
 
+# alpaca_prompt = Copied from above
 FastLanguageModel.for_inference(model) # Enable native 2x faster inference
+inputs = tokenizer(
+[
+    alpaca_prompt.format(
+        "Given the following form of a jazz standard, generate a jazz solo, a list of notes in the SCAMP format with the addition of the chord which the note is currently soloing over.", # instruction
+        "A1: ||Bb6 G7 |C-7 F7 |Bb G-7 |C-7 F7 |F-7 Bb7 |Eb7 Ab7 |D-7 G7 |C-7 F7 || A2: ||Bb6 G7 |C-7 F7 |Bb G-7 |C-7 F7 |F-7 Bb7 |Eb7 Ab7 |C-7 F7 |Bb6 || B1: ||D7 |D7 |G7 |G7 |C7 |C7 |F7 |F7 || A3: ||Bb G7 |C-7 F7 |Bb G-7 |C-7 F7 |F-7 Bb7 |Eb7 Ab7 |C-7 F7 |Bb6 ||", # input
+        "", # output - leave this blank for generation!
+    )
+], return_tensors = "pt").to("cuda")
 
-messages = [
-    {"from": "human", "value": "Continue the fibonnaci sequence: 1, 1, 2, 3, 5, 8,"},
-]
-inputs = tokenizer.apply_chat_template(
-    messages,
-    tokenize = True,
-    add_generation_prompt = True, # Must add for generation
-    return_tensors = "pt",
-).to("cuda")
-
-text_streamer = TextStreamer(tokenizer, skip_prompt = True)
-_ = model.generate(input_ids = inputs, streamer = text_streamer, max_new_tokens = 128, use_cache = True)
+text_streamer = TextStreamer(tokenizer)
+_ = model.generate(**inputs, streamer = text_streamer, max_new_tokens = 512)
 
 """<a name="Save"></a>
 ### Saving, loading finetuned models
@@ -224,42 +188,39 @@ To save the final model as LoRA adapters, either use Huggingface's `push_to_hub`
 **[NOTE]** This ONLY saves the LoRA adapters, and not the full model. To save to 16bit or GGUF, scroll down!
 """
 
-model.save_pretrained("phi_3_5_lora_model") # Local saving
-tokenizer.save_pretrained("phi_3_5_lora_model")
-# model.push_to_hub("your_name/lora_model", token = "...") # Online saving
-# tokenizer.push_to_hub("your_name/lora_model", token = "...") # Online saving
+model.save_pretrained("qwen_2_5_0_5B_lora_model") # Local saving
+tokenizer.save_pretrained("qwen_2_5_0_5B_lora_model")
+
 
 """Now if you want to load the LoRA adapters we just saved for inference, set `False` to `True`:"""
 
 if False:
-    from unsloth import FastLanguageModel
     model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name = "phi_3_5_lora_model", # YOUR MODEL YOU USED FOR TRAINING
+        model_name = "qwen_2_5_0_5B_lora_model", # YOUR MODEL YOU USED FOR TRAINING
         max_seq_length = max_seq_length,
         dtype = dtype,
         load_in_4bit = load_in_4bit,
     )
     FastLanguageModel.for_inference(model) # Enable native 2x faster inference
 
-messages = [
-    {"from": "human", "value": "What is a famous tall tower in Paris?"},
-]
-inputs = tokenizer.apply_chat_template(
-    messages,
-    tokenize = True,
-    add_generation_prompt = True, # Must add for generation
-    return_tensors = "pt",
-).to("cuda")
+# alpaca_prompt = You MUST copy from above!
 
-text_streamer = TextStreamer(tokenizer, skip_prompt = True)
-_ = model.generate(input_ids = inputs, streamer = text_streamer, max_new_tokens = 128, use_cache = True)
+""" inputs = tokenizer(
+[
+    alpaca_prompt.format(
+        "What is a famous tall tower in Paris?", # instruction
+        "", # input
+        "", # output - leave this blank for generation!
+    )
+], return_tensors = "pt").to("cuda") """
+
+text_streamer = TextStreamer(tokenizer)
+_ = model.generate(**inputs, streamer = text_streamer, max_new_tokens = 512)
 
 """You can also use Hugging Face's `AutoModelForPeftCausalLM`. Only use this if you do not have `unsloth` installed. It can be hopelessly slow, since `4bit` model downloading is not supported, and Unsloth's **inference is 2x faster**."""
 
 if False:
     # I highly do NOT suggest - use Unsloth if possible
-    from peft import AutoPeftModelForCausalLM
-    from transformers import AutoTokenizer
     model = AutoPeftModelForCausalLM.from_pretrained(
         "lora_model", # YOUR MODEL YOU USED FOR TRAINING
         load_in_4bit = load_in_4bit,
@@ -317,4 +278,5 @@ if False:
         token = "", # Get a token at https://huggingface.co/settings/tokens
     )
 
-# Now, use the `model-unsloth.gguf` file or `model-unsloth-Q4_K_M.gguf` file in `llama.cpp` or a UI based system like `GPT4All`. You can install GPT4All by going [here](https://gpt4all.io/index.html).
+#Now, use the `model-unsloth.gguf` file or `model-unsloth-Q4_K_M.gguf` file in `llama.cpp` or a UI based system like `GPT4All`. You can install GPT4All by going [here](https://gpt4all.io/index.html).
+
